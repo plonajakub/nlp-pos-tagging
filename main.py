@@ -12,6 +12,7 @@ from keras.preprocessing.text import Tokenizer
 from keras.utils.np_utils import to_categorical
 from nltk.corpus import brown
 from sklearn.model_selection import RepeatedKFold
+from tensorflow import keras
 
 
 def nltk_first_time_setup():
@@ -105,7 +106,13 @@ def build_rnn_model(X, y,
 
     rnn_model.compile(loss='categorical_crossentropy',
                       optimizer='adam',
-                      metrics=['acc'])
+                      metrics=[
+                          'accuracy',
+                          keras.metrics.TruePositives(name='tp'),
+                          keras.metrics.FalsePositives(name='fp'),
+                          keras.metrics.TrueNegatives(name='tn'),
+                          keras.metrics.FalseNegatives(name='fn'),
+                      ])
     rnn_model.summary()
     return rnn_model, with_embedding
 
@@ -137,6 +144,7 @@ def test_models(X, y, *, n_splits=5, n_repeats=2, batch_size=64, epochs=5, ):
     }
     rkf = RepeatedKFold(n_splits=n_splits, n_repeats=n_repeats, random_state=0xDEADBEEF)
     accuracy_scores = {k: [] for k in models.keys()}
+    balanced_accuracy_scores = {k: [] for k in models.keys()}
     for train_idx, test_idx in rkf.split(X, y[:, 0, 0]):
         for model_name, model_builder in models.items():
             model, with_embedding = model_builder(X, y)
@@ -145,12 +153,14 @@ def test_models(X, y, *, n_splits=5, n_repeats=2, batch_size=64, epochs=5, ):
             else:
                 X_reshaped = X
             model.fit(X_reshaped[train_idx], y[train_idx], batch_size=batch_size, epochs=epochs)
-            loss, model_accuracy = model.evaluate(X_reshaped[test_idx], y[test_idx], verbose=1)
-            accuracy_scores[model_name].append(model_accuracy)
+            loss, acc, tp, fp, tn, fn = model.evaluate(X_reshaped[test_idx], y[test_idx], verbose=1)
+            balanced_accuracy = ((tp / (tp + fn)) + (tn / (tn + fp))) / 2
+            accuracy_scores[model_name].append(acc)
+            balanced_accuracy_scores[model_name].append(balanced_accuracy)
             # predictions = model.predict(X_reshaped[test_idx])
             # print(predictions)
 
-    scores = {'accuracy': accuracy_scores}
+    scores = {'accuracy': accuracy_scores, 'balanced_accuracy': balanced_accuracy_scores}
     for score_name, score_values in scores.items():
         results_df = pd.DataFrame(score_values)
         results_df.to_csv(f'results/test_results_{score_name}.csv')
@@ -163,6 +173,7 @@ def main():
     X, y = preprocess_data()
     print(f'Shapes after preprocessing; X: {X.shape}, y: {y.shape}')
     scores = test_models(X, y)
+    # scores = test_models(X[:100], y[:100], epochs=1, n_repeats=1, n_splits=2)
 
 
 if __name__ == '__main__':
